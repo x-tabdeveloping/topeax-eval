@@ -118,11 +118,11 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
                 "model": model_name,
                 "n_components": model.components_.shape[0],
                 "true_n": len(set(true_labels)),
-                "keywords": keywords,
                 **clust_scores,
                 **topic_scores,
             }
             print("Results: ", res)
+            res["keywords"] = keywords
             results.append(res)
     res_df = pd.DataFrame.from_records(results)
     out_name = encoder_name.replace("/", "__")
