@@ -122,6 +122,7 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
                 **clust_scores,
                 **topic_scores,
             }
+            print("Results: ", res)
             results.append(res)
     res_df = pd.DataFrame.from_records(results)
     out_name = encoder_name.replace("/", "__")
