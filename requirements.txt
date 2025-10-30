@@ -4,3 +4,4 @@ mteb==2.1.1
 pandas==2.3.2
 sentence-transformers==5.1.0
 turftopic==0.20.0
+umap-learn==0.5.9
