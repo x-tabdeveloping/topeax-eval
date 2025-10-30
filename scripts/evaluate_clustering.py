@@ -97,9 +97,10 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
             true_labels = list(ds["labels"])
         print("Training internal word embeddings using GloVe...")
         tokenizer = CountVectorizer().build_analyzer()
-        in_wv = GloVe(vector_size=50)
+        glove = GloVe(vector_size=50)
         tokenized_corpus = [tokenizer(text) for text in corpus]
-        in_wv.train(tokenized_corpus)
+        glove.train(tokenized_corpus)
+        in_wv = glove.wv
         encoder = SentenceTransformer(encoder_name)
         print("Encoding task corpus.")
         embeddings = encoder.encode(corpus, show_progress_bar=True)
