@@ -84,7 +84,7 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
     ex_wv = api.load("word2vec-google-news-300")
     print("Loading benchmark")
     benchmark = mteb.get_benchmark("MTEB(eng, v2)")
-    tasks = benchmark.tasks
+    tasks = mteb.filter_tasks(benchmark.tasks, task_types=["Clustering"])
     results = []
     for task in tasks:
         print(f"Loading data for task {task.metadata.name}")
