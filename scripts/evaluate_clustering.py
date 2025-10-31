@@ -1,11 +1,11 @@
 import argparse
+import json
 from itertools import chain, combinations
 from pathlib import Path
 
 import gensim.downloader as api
 import mteb
 import numpy as np
-import pandas as pd
 from glovpy import GloVe
 from sentence_transformers import SentenceTransformer
 from sklearn import metrics
@@ -29,7 +29,7 @@ def diversity(keywords: list[list[str]]) -> float:
     all_words = list(chain.from_iterable(keywords))
     unique_words = set(all_words)
     total_words = len(all_words)
-    return len(unique_words) / total_words
+    return float(len(unique_words) / total_words)
 
 
 def word_embedding_coherence(keywords, wv):
@@ -41,7 +41,7 @@ def word_embedding_coherence(keywords, wv):
                 if word1 in wv.index_to_key and word2 in wv.index_to_key:
                     local_simi.append(wv.similarity(word1, word2))
             arrays.append(np.nanmean(local_simi))
-    return np.nanmean(arrays)
+    return float(np.nanmean(arrays))
 
 
 def evaluate_clustering(true_labels, pred_labels) -> dict[str, float]:
@@ -79,14 +79,39 @@ def evaluate_topic_quality(keywords, ex_wv, in_wv) -> dict[str, float]:
     return res
 
 
+def load_cache(out_path):
+    cache_entries = []
+    with out_path.open() as cache_file:
+        for line in cache_file:
+            entry = json.loads(line.strip())
+            cache_entry = (entry["task"], entry["model"])
+            cache_entries.append(cache_entry)
+    return set(cache_entries)
+
+
 def main(encoder_name: str = "all-MiniLM-L6-v2"):
+    out_dir = Path("results")
+    out_dir.mkdir(exist_ok=True)
+    encoder_path_name = encoder_name.replace("/", "__")
+    out_path = out_dir.joinpath(f"{encoder_path_name}.jsonl")
+    if out_path.is_file():
+        cache = load_cache(out_path)
+    else:
+        cache = set()
+        # Create file if doesn't exist
+        with out_path.open("w"):
+            pass
     print("Loading external word embeddings")
     ex_wv = api.load("word2vec-google-news-300")
     print("Loading benchmark")
     benchmark = mteb.get_benchmark("MTEB(eng, v2)")
     tasks = mteb.filter_tasks(benchmark.tasks, task_types=["Clustering"])
-    results = []
     for task in tasks:
+        if all(
+            [(task.metadata.name, model_name) in cache for model_name in topic_models]
+        ):
+            print("All models already completed, skipping.")
+            continue
         print(f"Loading data for task {task.metadata.name}")
         task.load_data()
         ds = task.dataset["test"]
@@ -105,6 +130,9 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
         print("Encoding task corpus.")
         embeddings = encoder.encode(corpus, show_progress_bar=True)
         for model_name in topic_models:
+            if (task.metadata.name, model_name) in cache:
+                print(f"{model_name} already done, skipping.")
+                continue
             print(f"Running {model_name}.")
             model = topic_models[model_name](encoder)
             model.fit(corpus, embeddings=embeddings)
@@ -123,11 +151,8 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
             }
             print("Results: ", res)
             res["keywords"] = keywords
-            results.append(res)
-    res_df = pd.DataFrame.from_records(results)
-    out_name = encoder_name.replace("/", "__")
-    Path("results").mkdir(exist_ok=True)
-    res_df.to_csv(f"results/mteb_clustering_{out_name}.csv")
+            with out_path.open("a") as out_file:
+                out_file.write(json.dumps(res) + "\n")
 
 
 if __name__ == "__main__":
