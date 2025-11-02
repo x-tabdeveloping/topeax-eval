@@ -196,3 +196,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     encoder = args.embedding_model
     main(encoder)
+    print("DONE")
