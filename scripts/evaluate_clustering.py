@@ -2,10 +2,12 @@ import argparse
 import json
 from itertools import chain, combinations
 from pathlib import Path
+from typing import Iterable
 
 import gensim.downloader as api
 import mteb
 import numpy as np
+from datasets import load_dataset
 from glovpy import GloVe
 from sentence_transformers import SentenceTransformer
 from sklearn import metrics
@@ -23,6 +25,35 @@ topic_models = {
         encoder=encoder, vectorizer=CountVectorizer(), random_state=42
     ),
 }
+
+
+def load_corpora() -> Iterable[tuple[str, list[str], list[str]]]:
+    mteb_tasks = mteb.get_tasks(
+        [
+            "ArXivHierarchicalClusteringP2P",
+            "BiorxivClusteringP2P.v2",
+            "MedrxivClusteringP2P.v2",
+            "StackExchangeClusteringP2P.v2",
+            "TwentyNewsgroupsClustering.v2",
+        ]
+    )
+    for task in mteb_tasks:
+        task.load_data()
+        ds = task.dataset["test"]
+        corpus = list(ds["sentences"])
+        if isinstance(ds["labels"][0], list):
+            true_labels = [label[0] for label in ds["labels"]]
+        else:
+            true_labels = list(ds["labels"])
+        yield task.metadata.name, corpus, true_labels
+    ds = load_dataset("cardiffnlp/tweet_topic_single", split="train_all")
+    corpus = list(ds["text"])
+    labels = list(ds["label"])
+    yield "TweetTopicClustering", corpus, labels
+    ds = load_dataset("gopalkalpande/bbc-news-summary", split="train")
+    corpus = list(ds["Summaries"])
+    labels = list(ds["File_path"])
+    yield "BBCNewsClustering", corpus, labels
 
 
 def diversity(keywords: list[list[str]]) -> float:
@@ -104,22 +135,11 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
     print("Loading external word embeddings")
     ex_wv = api.load("word2vec-google-news-300")
     print("Loading benchmark")
-    benchmark = mteb.get_benchmark("MTEB(eng, v2)")
-    tasks = mteb.filter_tasks(benchmark.tasks, task_types=["Clustering"])
-    for task in tasks:
-        if all(
-            [(task.metadata.name, model_name) in cache for model_name in topic_models]
-        ):
+    tasks = load_corpora()
+    for task_name, corpus, true_labels in tasks:
+        if all([(task_name, model_name) in cache for model_name in topic_models]):
             print("All models already completed, skipping.")
             continue
-        print(f"Loading data for task {task.metadata.name}")
-        task.load_data()
-        ds = task.dataset["test"]
-        corpus = list(ds["sentences"])
-        if isinstance(ds["labels"][0], list):
-            true_labels = [label[0] for label in ds["labels"]]
-        else:
-            true_labels = list(ds["labels"])
         print("Training internal word embeddings using GloVe...")
         tokenizer = CountVectorizer().build_analyzer()
         glove = GloVe(vector_size=50)
@@ -130,7 +150,7 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
         print("Encoding task corpus.")
         embeddings = encoder.encode(corpus, show_progress_bar=True)
         for model_name in topic_models:
-            if (task.metadata.name, model_name) in cache:
+            if (task_name, model_name) in cache:
                 print(f"{model_name} already done, skipping.")
                 continue
             print(f"Running {model_name}.")
@@ -142,7 +162,7 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
             topic_scores = evaluate_topic_quality(keywords, ex_wv, in_wv)
             res = {
                 "encoder": encoder_name,
-                "task": task.metadata.name,
+                "task": task_name,
                 "model": model_name,
                 "n_components": model.components_.shape[0],
                 "true_n": len(set(true_labels)),
