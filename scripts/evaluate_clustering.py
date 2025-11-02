@@ -2,7 +2,7 @@ import argparse
 import json
 from itertools import chain, combinations
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 import gensim.downloader as api
 import mteb
@@ -27,7 +27,7 @@ topic_models = {
 }
 
 
-def load_corpora() -> Iterable[tuple[str, list[str], list[str]]]:
+def load_corpora() -> Iterable[tuple[str, Callable]]:
     mteb_tasks = mteb.get_tasks(
         [
             "ArXivHierarchicalClusteringP2P",
@@ -38,22 +38,35 @@ def load_corpora() -> Iterable[tuple[str, list[str], list[str]]]:
         ]
     )
     for task in mteb_tasks:
-        task.load_data()
-        ds = task.dataset["test"]
-        corpus = list(ds["sentences"])
-        if isinstance(ds["labels"][0], list):
-            true_labels = [label[0] for label in ds["labels"]]
-        else:
-            true_labels = list(ds["labels"])
-        yield task.metadata.name, corpus, true_labels
-    ds = load_dataset("cardiffnlp/tweet_topic_single", split="train_all")
-    corpus = list(ds["text"])
-    labels = list(ds["label"])
-    yield "TweetTopicClustering", corpus, labels
-    ds = load_dataset("gopalkalpande/bbc-news-summary", split="train")
-    corpus = list(ds["Summaries"])
-    labels = list(ds["File_path"])
-    yield "BBCNewsClustering", corpus, labels
+
+        def _load_dataset():
+            task.load_data()
+            ds = task.dataset["test"]
+            corpus = list(ds["sentences"])
+            if isinstance(ds["labels"][0], list):
+                true_labels = [label[0] for label in ds["labels"]]
+            else:
+                true_labels = list(ds["labels"])
+            return corpus, true_labels
+
+        yield task.metadata.name, _load_dataset
+
+    def _load_dataset():
+        # Taken from here cardiffnlp/tweet_topic_single with "train_all"
+        ds = load_dataset("kardosdrur/tweet_topic_clustering", split="train_all")
+        corpus = list(ds["text"])
+        labels = list(ds["label"])
+        return corpus, labels
+
+    yield "TweetTopicClustering", _load_dataset
+
+    def _load_dataset():
+        ds = load_dataset("gopalkalpande/bbc-news-summary", split="train")
+        corpus = list(ds["Summaries"])
+        labels = list(ds["File_path"])
+        return corpus, labels
+
+    yield "BBCNewsClustering", _load_dataset
 
 
 def diversity(keywords: list[list[str]]) -> float:
@@ -136,10 +149,12 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
     ex_wv = api.load("word2vec-google-news-300")
     print("Loading benchmark")
     tasks = load_corpora()
-    for task_name, corpus, true_labels in tasks:
+    for task_name, load in tasks:
         if all([(task_name, model_name) in cache for model_name in topic_models]):
             print("All models already completed, skipping.")
             continue
+        print("Load corpus")
+        corpus, true_labels = load()
         print("Training internal word embeddings using GloVe...")
         tokenizer = CountVectorizer().build_analyzer()
         glove = GloVe(vector_size=50)
