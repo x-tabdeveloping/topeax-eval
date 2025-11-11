@@ -3,6 +3,8 @@
 Evaluating the Topeax topic model for my NLP exam project for the Cognitive Science master programme at Aarhus University.
 This repository contains evaluation scripts and results for the paper.
 
+<img src="figures/peax.png">
+
 ## Installation
 
 In order to reproduce evaluations, figures and tables, one first has to fetch the repository and install the required packages.
