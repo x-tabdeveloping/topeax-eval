@@ -1,5 +1,6 @@
 import argparse
 import json
+import time
 from itertools import chain, combinations
 from pathlib import Path
 from typing import Callable, Iterable
@@ -12,17 +13,40 @@ from glovpy import GloVe
 from sentence_transformers import SentenceTransformer
 from sklearn import metrics
 from sklearn.feature_extraction.text import CountVectorizer
-from turftopic import BERTopic, Top2Vec, Topeax
+from turftopic import (AutoEncodingTopicModel, BERTopic, KeyNMF,
+                       SemanticSignalSeparation, SensTopic, Top2Vec, Topeax)
 
 topic_models = {
-    "Topeax": lambda encoder: Topeax(
-        encoder=encoder, vectorizer=CountVectorizer(), random_state=42
+    "Topeax": lambda encoder, n_components: Topeax(encoder=encoder, random_state=42),
+    "BERTopic(Auto)": lambda encoder, n_components: BERTopic(
+        encoder=encoder, random_state=42
     ),
-    "BERTopic": lambda encoder: BERTopic(
-        encoder=encoder, vectorizer=CountVectorizer(), random_state=42
+    "Top2Vec(Auto)": lambda encoder, n_components: Top2Vec(
+        encoder=encoder, random_state=42
     ),
-    "Top2Vec": lambda encoder: Top2Vec(
-        encoder=encoder, vectorizer=CountVectorizer(), random_state=42
+    "SensTopic(Auto)": lambda encoder, n_components: SensTopic(
+        n_components="auto", encoder=encoder, random_state=42
+    ),
+    "SensTopic": lambda encoder, n_components: SensTopic(
+        n_components=n_components, encoder=encoder, random_state=42
+    ),
+    "KeyNMF(Auto)": lambda encoder, n_components: KeyNMF(
+        n_components="auto", encoder=encoder, random_state=42
+    ),
+    "KeyNMF": lambda encoder, n_components: SensTopic(
+        n_components=n_components, encoder=encoder, random_state=42
+    ),
+    "Top2Vec(Reduce)": lambda encoder, n_components: Top2Vec(
+        n_reduce_to=n_components, encoder=encoder, random_state=42
+    ),
+    "BERTopic(Reduce)": lambda encoder, n_components: BERTopic(
+        n_reduce_to=n_components, encoder=encoder, random_state=42
+    ),
+    "ZeroShotTM": lambda encoder, n_components: AutoEncodingTopicModel(
+        n_components=n_components, encoder=encoder, random_state=42, combined=False
+    ),
+    "SemanticSignalSeparation": lambda encoder, n_components: SemanticSignalSeparation(
+        n_components=n_components, encoder=encoder, random_state=42
     ),
 }
 
@@ -169,16 +193,26 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
                 print(f"{model_name} already done, skipping.")
                 continue
             print(f"Running {model_name}.")
-            model = topic_models[model_name](encoder)
-            model.fit(corpus, embeddings=embeddings)
+            true_n = len(set(true_labels))
+            model = topic_models[model_name](encoder=encoder, n_components=true_n)
+            start_time = time.time()
+            doc_topic_matrx = model.fit_transform(corpus, embeddings=embeddings)
+            end_time = time.time()
+            labels = getattr(model, "labels_", None)
+            if labels is None:
+                labels = np.argmax(doc_topic_matrx, axis=1)
             keywords = get_keywords(model)
             print("Evaluating model.")
             clust_scores = evaluate_clustering(true_labels, model.labels_)
             topic_scores = evaluate_topic_quality(keywords, ex_wv, in_wv)
+            runtime = end_time - start_time
             res = {
                 "encoder": encoder_name,
                 "task": task_name,
                 "model": model_name,
+                "auto": "(Auto)" in model_name,
+                "runtime": runtime,
+                "dps": len(corpus) / runtime,
                 "n_components": model.components_.shape[0],
                 "true_n": len(set(true_labels)),
                 **clust_scores,
