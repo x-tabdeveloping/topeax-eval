@@ -3,7 +3,7 @@ glovpy==0.2.0
 mteb==2.1.1
 pandas==2.3.2
 sentence-transformers==5.1.0
-turftopic==0.20.0
+turftopic==0.22.0
 umap-learn==0.5.9.post2
 statsmodels==0.14.5
 plotly==6.4.0
