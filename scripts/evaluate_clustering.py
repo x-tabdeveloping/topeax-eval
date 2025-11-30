@@ -13,11 +13,21 @@ from glovpy import GloVe
 from sentence_transformers import SentenceTransformer
 from sklearn import metrics
 from sklearn.feature_extraction.text import CountVectorizer
-from turftopic import (AutoEncodingTopicModel, BERTopic, KeyNMF,
-                       SemanticSignalSeparation, SensTopic, Top2Vec, Topeax)
+from turftopic import (
+    AutoEncodingTopicModel,
+    BERTopic,
+    FASTopic,
+    KeyNMF,
+    SemanticSignalSeparation,
+    SensTopic,
+    Top2Vec,
+    Topeax,
+)
 
 topic_models = {
-    "Topeax": lambda encoder, n_components: Topeax(encoder=encoder, random_state=42),
+    "Topeax(Auto)": lambda encoder, n_components: Topeax(
+        encoder=encoder, random_state=42
+    ),
     "BERTopic(Auto)": lambda encoder, n_components: BERTopic(
         encoder=encoder, random_state=42
     ),
@@ -46,6 +56,9 @@ topic_models = {
         n_components=n_components, encoder=encoder, random_state=42, combined=False
     ),
     "SemanticSignalSeparation": lambda encoder, n_components: SemanticSignalSeparation(
+        n_components=n_components, encoder=encoder, random_state=42
+    ),
+    "FASTopic": lambda encoder, n_components: FASTopic(
         n_components=n_components, encoder=encoder, random_state=42
     ),
 }
@@ -185,7 +198,7 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
         tokenized_corpus = [tokenizer(text) for text in corpus]
         glove.train(tokenized_corpus)
         in_wv = glove.wv
-        encoder = SentenceTransformer(encoder_name)
+        encoder = SentenceTransformer(encoder_name, device="cpu")
         print("Encoding task corpus.")
         embeddings = encoder.encode(corpus, show_progress_bar=True)
         for model_name in topic_models:
@@ -203,7 +216,7 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
                 labels = np.argmax(doc_topic_matrx, axis=1)
             keywords = get_keywords(model)
             print("Evaluating model.")
-            clust_scores = evaluate_clustering(true_labels, model.labels_)
+            clust_scores = evaluate_clustering(true_labels, labels)
             topic_scores = evaluate_topic_quality(keywords, ex_wv, in_wv)
             runtime = end_time - start_time
             res = {
