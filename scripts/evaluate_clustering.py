@@ -13,16 +13,8 @@ from glovpy import GloVe
 from sentence_transformers import SentenceTransformer
 from sklearn import metrics
 from sklearn.feature_extraction.text import CountVectorizer
-from turftopic import (
-    AutoEncodingTopicModel,
-    BERTopic,
-    FASTopic,
-    KeyNMF,
-    SemanticSignalSeparation,
-    SensTopic,
-    Top2Vec,
-    Topeax,
-)
+from turftopic import (GMM, AutoEncodingTopicModel, BERTopic, FASTopic, KeyNMF,
+                       SemanticSignalSeparation, SensTopic, Top2Vec, Topeax)
 
 topic_models = {
     "Topeax(Auto)": lambda encoder, n_components: Topeax(
@@ -43,7 +35,10 @@ topic_models = {
     "KeyNMF(Auto)": lambda encoder, n_components: KeyNMF(
         n_components="auto", encoder=encoder, random_state=42
     ),
-    "KeyNMF": lambda encoder, n_components: SensTopic(
+    "KeyNMF": lambda encoder, n_components: KeyNMF(
+        n_components=n_components, encoder=encoder, random_state=42
+    ),
+    "GMM": lambda encoder, n_components: GMM(
         n_components=n_components, encoder=encoder, random_state=42
     ),
     "Top2Vec(Reduce)": lambda encoder, n_components: Top2Vec(
