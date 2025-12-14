@@ -1,6 +1,6 @@
 import numpy as np
 
-from scripts.evaluate_clustering import load_corpora
+from evaluate_clustering import load_corpora
 
 # Generates a Typst Table of the descriptive statistics for each corpus
 lines = []
