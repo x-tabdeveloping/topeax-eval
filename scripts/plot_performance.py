@@ -11,6 +11,7 @@ from scipy.stats import bootstrap
 results_path = Path("results/")
 result_files = results_path.glob("*.jsonl")
 entries = []
+# Load entries from all results files
 for file_path in result_files:
     if file_path.stem.startswith("_"):
         # Skipping over files marked as not important
@@ -19,23 +20,29 @@ for file_path in result_files:
         for line in in_file:
             entry = json.loads(line.strip())
             entries.append(entry)
+# Arranging into a dataframe
 df = pd.DataFrame.from_records(entries)
+# Calculating aggregate metrics
 df["coherence"] = np.sqrt(df["c_ex"] * df["c_in"])
 df["topic_quality"] = np.sqrt(df["diversity"] * df["coherence"])
 df["cluster_topic_quality"] = np.sqrt(df["topic_quality"] * df["fowlkes_mallows_score"])
 df["n_diff"] = df["n_components"] - df["true_n"]
+# Calculating absolute percentage error on calculating number of topics
 df["abs_diff_percent"] = np.abs(
     100 * ((df["true_n"] - df["n_components"]) / df["true_n"])
 )
+# Making model an ordered variable so we get the same colors in all plots
 df["model"] = pd.Categorical(
     df["model"], categories=["Topeax", "Top2Vec", "BERTopic"], ordered=True
 )
 
+# Printing the mean absolute percentage error for different models with uncertainty
 mape = df.groupby("model")["abs_diff_percent"].agg(["mean", "std"])
 print(mape)
 
 
 def bootstrap_interval(data) -> tuple[float, float, float]:
+    """Returns bootstrapped 95% confidence interval with mean."""
     res = bootstrap([data], np.mean)
     return (
         np.mean(data),
@@ -43,10 +50,10 @@ def bootstrap_interval(data) -> tuple[float, float, float]:
         res.confidence_interval.high,
     )
 
-
-df.groupby("model")[["c_in", "c_ex", "diversity", "topic_quality"]].agg(
+# Prints table of metrics with uncertainty
+print(df.groupby("model")[["c_in", "c_ex", "diversity", "topic_quality"]].agg(
     lambda d: f"{d.mean():.2f}±{d.std():.2f}"
-)
+))
 
 
 def bootstrap_scatter(
@@ -56,6 +63,7 @@ def bootstrap_scatter(
     groups: str,
     color_mapping: Optional[dict[str, str]] = None,
 ) -> go.Figure:
+    """Produces a scatterplot with bootstrapped confidence intervals around mean estimates of two columns in a dataframe."""
     fig = go.Figure()
     for group_name, group_data in data.groupby(groups):
         x, x_low, x_high = bootstrap_interval(group_data[x_col])
@@ -105,7 +113,7 @@ def bootstrap_scatter(
     )
     return fig
 
-
+# Producing bootstrapped scatterplot of FMI and Interpretability
 color_mapping = {
     "Topeax": "#5D5DEF",
     "Top2Vec": "#8AD0B5",
@@ -139,9 +147,11 @@ fig = fig.add_scatter(
     showlegend=False,
     mode="markers",
 )
+# Reversing trace order so the first trace is on top.
 fig.data = fig.data[::-1]
 fig.show()
 
+# Producing box plot of absolute percentage difference in N-topics
 fig = px.box(
     df,
     x="model",
@@ -163,7 +173,7 @@ fig = fig.update_layout(
 fig = fig.update_traces(showlegend=False)
 fig.show()
 
-
+# Producing plot of joint cluster and topic quality
 fig = px.box(
     df,
     y="model",
