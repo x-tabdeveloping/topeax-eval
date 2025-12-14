@@ -14,6 +14,7 @@ from sklearn import metrics
 from sklearn.feature_extraction.text import CountVectorizer
 from turftopic import BERTopic, Top2Vec, Topeax
 
+# Model declarations. Each one is a lambda, so we can lazy-load models
 topic_models = {
     "Topeax": lambda encoder: Topeax(
         encoder=encoder, vectorizer=CountVectorizer(), random_state=42
@@ -28,6 +29,7 @@ topic_models = {
 
 
 def load_corpora() -> Iterable[tuple[str, Callable]]:
+    """Yields all evaluation corpora in the benchmark"""
     mteb_tasks = mteb.get_tasks(
         [
             "ArXivHierarchicalClusteringP2P",
@@ -38,11 +40,13 @@ def load_corpora() -> Iterable[tuple[str, Callable]]:
         ]
     )
     for task in mteb_tasks:
-
+        # Iterating through MTEB clustering tasks
+        # We use loaders yet again so that we can lazy-load
         def _load_dataset():
             task.load_data()
             ds = task.dataset["test"]
             corpus = list(ds["sentences"])
+            # Some clustering tasks are hierarchical, here we take the first label from each
             if isinstance(ds["labels"][0], list):
                 true_labels = [label[0] for label in ds["labels"]]
             else:
@@ -70,25 +74,32 @@ def load_corpora() -> Iterable[tuple[str, Callable]]:
 
 
 def diversity(keywords: list[list[str]]) -> float:
+    """Computes topic diversity measure"""
+    # We flatten the list of words
     all_words = list(chain.from_iterable(keywords))
     unique_words = set(all_words)
     total_words = len(all_words)
+    # Return type/token ratio in topic descriptions
     return float(len(unique_words) / total_words)
 
 
 def word_embedding_coherence(keywords, wv):
+    """Calculates word embedding coherence of keywords given a word embedding model."""
     arrays = []
     for index, topic in enumerate(keywords):
         if len(topic) > 0:
             local_simi = []
+            # We take all combinations of words within a topic
             for word1, word2 in combinations(topic, 2):
                 if word1 in wv.index_to_key and word2 in wv.index_to_key:
+                    # Then calculate their similarity according to the model
                     local_simi.append(wv.similarity(word1, word2))
             arrays.append(np.nanmean(local_simi))
     return float(np.nanmean(arrays))
 
 
 def evaluate_clustering(true_labels, pred_labels) -> dict[str, float]:
+    """Evaluates the cluster quality on multiple metrics."""
     res = {}
     for metric in [
         metrics.fowlkes_mallows_score,
@@ -104,17 +115,20 @@ def get_keywords(model) -> list[list[str]]:
     """Get top words and ignore outlier topic."""
     n_topics = model.components_.shape[0]
     try:
+        # Check if model has a classes_ property
         classes = model.classes_
     except AttributeError:
         classes = list(range(n_topics))
     res = []
     for topic_id, words in zip(classes, model.get_top_words()):
+        # We ignore outlier topics
         if topic_id != -1:
             res.append(words)
     return res
 
 
 def evaluate_topic_quality(keywords, ex_wv, in_wv) -> dict[str, float]:
+    """Evaluates topic quality on diversity and internal/external word embedding coherence"""
     res = {
         "diversity": diversity(keywords),
         "c_in": word_embedding_coherence(keywords, in_wv),
@@ -124,6 +138,7 @@ def evaluate_topic_quality(keywords, ex_wv, in_wv) -> dict[str, float]:
 
 
 def load_cache(out_path):
+    """Loads result cache in order to not re-run already computed results"""
     cache_entries = []
     with out_path.open() as cache_file:
         for line in cache_file:
@@ -134,15 +149,17 @@ def load_cache(out_path):
 
 
 def main(encoder_name: str = "all-MiniLM-L6-v2"):
+    # We save results to results/ and create the folder if it doesn't exist
     out_dir = Path("results")
     out_dir.mkdir(exist_ok=True)
     encoder_path_name = encoder_name.replace("/", "__")
     out_path = out_dir.joinpath(f"{encoder_path_name}.jsonl")
+    # Load the cache if it exists
     if out_path.is_file():
         cache = load_cache(out_path)
     else:
         cache = set()
-        # Create file if doesn't exist
+        # Create cache file if it doesn't already exist
         with out_path.open("w"):
             pass
     print("Loading external word embeddings")
@@ -186,6 +203,7 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
             }
             print("Results: ", res)
             res["keywords"] = keywords
+            # We write into the file after each run so that we don't lose anything
             with out_path.open("a") as out_file:
                 out_file.write(json.dumps(res) + "\n")
 
@@ -193,6 +211,7 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(prog="Evaluate clustering.")
     parser.add_argument("embedding_model")
+    # We get the embedding model from command line arguments.
     args = parser.parse_args()
     encoder = args.embedding_model
     main(encoder)
