@@ -1,3 +1,4 @@
+"""Script for running regression model to predict FMI from model type"""
 import json
 from pathlib import Path
 
@@ -17,11 +18,7 @@ for file_path in result_files:
             entry = json.loads(line.strip())
             entries.append(entry)
 df = pd.DataFrame.from_records(entries)
-df["coherence"] = np.sqrt(df["c_ex"] * df["c_in"])
-df["topic_quality"] = np.sqrt(df["diversity"] * df["coherence"])
-df["cluster_topic_quality"] = np.sqrt(df["topic_quality"] * df["fowlkes_mallows_score"])
-df["n_diff"] = df["n_components"] - df["true_n"]
-df["n_diff_percent"] = -100 * ((df["true_n"] - df["n_components"]) / df["true_n"])
+# Making sure that Topeax is the intercept
 df["model"] = pd.Categorical(
     df["model"], categories=["Topeax", "Top2Vec", "BERTopic"], ordered=True
 )
@@ -29,14 +26,14 @@ df["model"] = pd.Categorical(
 reg_data = df[
     [
         "model",
-        "topic_quality",
-        "cluster_topic_quality",
         "encoder",
         "task",
         "fowlkes_mallows_score",
     ]
 ]
+# Grouping by encoder and task
 reg_data["groups"] = reg_data["encoder"].astype(str) + reg_data["task"]
+# Regression model predicting FMI from model with random intercepts for encoder-task pairs and random effect for task
 rand_eff_mod = smf.ols(
     formula="fowlkes_mallows_score ~ C(model)",
     data=reg_data,
@@ -45,4 +42,5 @@ rand_eff_mod = smf.ols(
 )
 res = rand_eff_mod.fit()
 
+# Printing regression coefficients as csv
 print(res.summary().as_csv())
