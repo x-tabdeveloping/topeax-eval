@@ -1,3 +1,4 @@
+"""Script for producing results for qualitative investigations"""
 import numpy as np
 import plotly.express as px
 from sentence_transformers import SentenceTransformer
@@ -6,18 +7,22 @@ from sklearn.datasets import fetch_20newsgroups
 from tqdm import trange
 from turftopic import BERTopic, Top2Vec, Topeax
 
+# Loading data
 ds = fetch_20newsgroups(
     subset="all",
     remove=("headers", "footers", "quotes"),
 )
 corpus = ds.data
 true_labels = ds.target
+# Embedding using SentenceTransformer
 encoder = SentenceTransformer("all-MiniLM-L6-v2")
 embeddings = np.load("embedding_cache/20news_all-MiniLM.npy")
 
+# Fitting Topeax to the data
 model = Topeax(encoder=encoder, random_state=42)
 doc_topic = model.fit_transform(corpus, embeddings=embeddings)
 
+# Plotting adjusted mutual information on heatmap between predicted and gold labels
 corr_m = np.zeros((len(ds.target_names), model.components_.shape[0]))
 for i in trange(len(ds.target_names)):
     for j in range(model.components_.shape[0]):
@@ -48,6 +53,7 @@ fig = fig.update_layout(
 fig.show()
 fig.write_image("figures/cluster_overlap_20news.png", scale=2)
 
+# Making density plot of the TSNE embeddings using the Topeax model
 fig = model.plot_density(light_mode=True)
 fig = fig.update_layout(width=600, height=600)
 fig = fig.for_each_annotation(
@@ -61,6 +67,7 @@ fig = fig.update_yaxes(showgrid=False, zeroline=False)
 fig.show()
 fig.write_image("figures/density_20news.png", scale=2)
 
+# Running Top2Vec and BERTopic
 top2vec = Top2Vec(encoder=encoder, random_state=42)
 top2vec.fit(corpus, embeddings=embeddings)
 
