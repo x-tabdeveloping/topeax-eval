@@ -14,6 +14,7 @@ from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 from turftopic import BERTopic, Top2Vec, Topeax
 
+# Loader functions for each model
 model_loaders = {
     "Topeax": lambda encoder, vocabulary: Topeax(
         encoder=encoder,
@@ -32,6 +33,7 @@ model_loaders = {
     ),
 }
 
+# None in this case means that we do not subsample
 SAMPLE_SIZES = [250, 1000, 5000, 10_000, None]
 ENCODER_NAME = "all-MiniLM-L6-v2"
 
@@ -39,7 +41,9 @@ ENCODER_NAME = "all-MiniLM-L6-v2"
 def stratified_subsample(
     corpus, labels, embeddings, sample_size: Optional[int] = None, seed: int = 42
 ) -> tuple[list[str], np.ndarray, np.ndarray]:
+    """Creates a subsample of the dataset stratified based on cluster labels"""
     if sample_size is None:
+        # If None return the whole corpus
         return corpus, labels, embeddings
     # Ignoring "test" split
     corpus, _, labels, _, embeddings, _ = train_test_split(
