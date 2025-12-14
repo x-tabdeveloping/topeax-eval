@@ -15,6 +15,7 @@ from umap import UMAP
 
 
 def create_umap(perplexity: int):
+    """Convenience function for initializing UMAP with a given perplexity"""
     dimensionality_reduction = UMAP(
         n_neighbors=perplexity,
         n_components=5,
@@ -24,7 +25,7 @@ def create_umap(perplexity: int):
     )
     return dimensionality_reduction
 
-
+# Loader functions for all models we test
 model_loaders = {
     "Topeax": lambda encoder, perplexity, vocabulary: Topeax(
         encoder=encoder,
