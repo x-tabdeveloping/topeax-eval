@@ -2,6 +2,7 @@ import numpy as np
 
 from scripts.evaluate_clustering import load_corpora
 
+# Generates a Typst Table of the descriptive statistics for each corpus
 lines = []
 for corpus_name, loader in load_corpora():
     documents, labels = loader()
