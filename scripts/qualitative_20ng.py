@@ -1,4 +1,6 @@
 """Script for producing results for qualitative investigations"""
+from pathlib import Path
+
 import numpy as np
 import plotly.express as px
 from sentence_transformers import SentenceTransformer
@@ -16,7 +18,16 @@ corpus = ds.data
 true_labels = ds.target
 # Embedding using SentenceTransformer
 encoder = SentenceTransformer("all-MiniLM-L6-v2")
-embeddings = np.load("embedding_cache/20news_all-MiniLM.npy")
+cache_dir = Path("embedding_cache")
+cache_dir.mkdir(exist_ok=True)
+cache_file = cache_dir.joinpath("20news_all-MiniLM.npy")
+print("Trying to load embeddings from cahce.")
+if cache_file.is_file():
+    embeddings = np.load(cache_file)
+else:
+    print("Not found, encoding...")
+    embeddings = encoder.encode(corpus, show_progress_bar=True)
+    np.save(cache_file, embeddings)
 
 # Fitting Topeax to the data
 model = Topeax(encoder=encoder, random_state=42)
