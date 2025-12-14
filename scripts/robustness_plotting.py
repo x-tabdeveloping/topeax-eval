@@ -1,3 +1,4 @@
+"""Plotting model robustness across subsample sizes and perplexities"""
 import json
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from plotly.subplots import make_subplots
 
 
 def load_results(file_path):
+    """Loads experimental results from a JSONL file"""
     entries = []
     with file_path.open() as in_file:
         for line in in_file:
@@ -40,8 +42,10 @@ for (
     x,
     x_name,
 ) in FILES:
+    # Going through both subsampling and robustness and producing the same plots with different X axes
     df = load_results(ROBUSTNESS_DIR.joinpath(file_name))
     fig = make_subplots(rows=1, cols=3, horizontal_spacing=0.08)
+    # Generating a line plot for each metric
     for col, (y, y_name) in enumerate(METRICS):
         subfig = px.line(
             df,
@@ -54,6 +58,7 @@ for (
         for trace in subfig.data:
             fig.add_trace(trace, col=col + 1, row=1)
         fig = fig.update_yaxes(title=y_name, col=col + 1, row=1)
+    # Adding gold N-topics line
     fig = fig.add_scatter(
         x=np.linspace(2, df[x].max(), 5),
         y=np.full(5, 20),
