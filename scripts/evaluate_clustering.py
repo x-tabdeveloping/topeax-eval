@@ -41,12 +41,6 @@ topic_models = {
     "GMM": lambda encoder, n_components: GMM(
         n_components=n_components, encoder=encoder, random_state=42
     ),
-    "Top2Vec(Reduce)": lambda encoder, n_components: Top2Vec(
-        n_reduce_to=n_components, encoder=encoder, random_state=42
-    ),
-    "BERTopic(Reduce)": lambda encoder, n_components: BERTopic(
-        n_reduce_to=n_components, encoder=encoder, random_state=42
-    ),
     "ZeroShotTM": lambda encoder, n_components: AutoEncodingTopicModel(
         n_components=n_components, encoder=encoder, random_state=42, combined=False
     ),
@@ -55,6 +49,12 @@ topic_models = {
     ),
     "FASTopic": lambda encoder, n_components: FASTopic(
         n_components=n_components, encoder=encoder, random_state=42
+    ),
+    "Top2Vec(Reduce)": lambda encoder, n_components: Top2Vec(
+        n_reduce_to=n_components, encoder=encoder, random_state=42
+    ),
+    "BERTopic(Reduce)": lambda encoder, n_components: BERTopic(
+        n_reduce_to=n_components, encoder=encoder, random_state=42
     ),
 }
 
@@ -170,6 +170,8 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
     out_dir.mkdir(exist_ok=True)
     encoder_path_name = encoder_name.replace("/", "__")
     out_path = out_dir.joinpath(f"{encoder_path_name}.jsonl")
+    emb_dir = Path("embeddings").joinpath(encoder_path_name)
+    emb_dir.mkdir(exist_ok=True, parents=True)
     if out_path.is_file():
         cache = load_cache(out_path)
     else:
@@ -182,6 +184,7 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
     print("Loading benchmark")
     tasks = load_corpora()
     for task_name, load in tasks:
+        print(f"====================={task_name}=====================")
         if all([(task_name, model_name) in cache for model_name in topic_models]):
             print("All models already completed, skipping.")
             continue
@@ -195,7 +198,14 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
         in_wv = glove.wv
         encoder = SentenceTransformer(encoder_name, device="cpu")
         print("Encoding task corpus.")
-        embeddings = encoder.encode(corpus, show_progress_bar=True)
+        emb_path = emb_dir.joinpath(f"{task_name}.npy")
+        if emb_path.is_file():
+            print("Embeddings found in cache.")
+            embeddings = np.load(emb_path)
+        else:
+            print("Embeddings not found in cache, skipping.")
+            embeddings = encoder.encode(corpus, show_progress_bar=True)
+            np.save(emb_path, embeddings)
         for model_name in topic_models:
             if (task_name, model_name) in cache:
                 print(f"{model_name} already done, skipping.")
