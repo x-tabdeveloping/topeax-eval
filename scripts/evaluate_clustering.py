@@ -6,12 +6,14 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 import gensim.downloader as api
+import joblib
 import mteb
 import numpy as np
 import torch
 from datasets import load_dataset
 from glovpy import GloVe
 from sentence_transformers import SentenceTransformer
+from sentence_transformers.models import Pooling
 from sklearn import metrics
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
@@ -194,40 +196,41 @@ def get_keywords(model) -> list[list[str]]:
     return res
 
 
-def bertscore_r(model, pred_labels, corpus) -> float:
-    encoder = model.encoder_
+def bertscore_r_evaluator(encoder, corpus, token_embeddings) -> float:
     # from https://aclanthology.org/2024.findings-emnlp.790.pdf
     vect = TfidfVectorizer(tokenizer=lambda s: encoder.tokenizer(s).tokens()).fit(
         corpus
     )
     # Mapping of each token to its IDF value
     idf = dict(zip(vect.get_feature_names_out(), vect.idf_))
-    n_topics = model.components_.shape[0]
-    try:
-        classes = model.classes_
-    except AttributeError:
-        classes = list(range(n_topics))
-    label_to_idx = {label: i for i, label in enumerate(classes)}
-    unique_labels = np.unique(pred_labels)
-    keywords = get_keywords(model)
-    topic_desc = [", ".join(keys) for keys in keywords]
-    topic_embeddings, topic_tokens = encode_tokens(encoder, topic_desc)
-    scores = []
-    for label in unique_labels:
-        topic_emb, topic_tok = (
-            topic_embeddings[label_to_idx[label]],
-            topic_tokens[label_to_idx[label]],
-        )
-        topic_documents = [
-            doc for is_in_topic, doc in zip(pred_labels == label, corpus) if is_in_topic
-        ]
-        doc_emb, doc_tok = encode_tokens(encoder, topic_documents)
-        topic_idf = np.array(idf[tok] for tok in topic_tok)
-        for i_doc in range(len(topic_documents)):
-            maxsim = np.max(cosine_similarity(topic_emb, doc_emb[i_doc]), axis=1)
-            score = np.sum((maxsim * topic_idf)) / np.sum(topic_idf)
-            scores.append(score)
-    return np.mean(scores)
+
+    def bertscore_r(model, pred_labels):
+        n_topics = model.components_.shape[0]
+        try:
+            classes = model.classes_
+        except AttributeError:
+            classes = list(range(n_topics))
+        label_to_idx = {label: i for i, label in enumerate(classes)}
+        unique_labels = np.unique(pred_labels)
+        keywords = get_keywords(model)
+        topic_desc = [", ".join(keys) for keys in keywords]
+        topic_embeddings, topic_tokens = encode_tokens(encoder, topic_desc)
+        scores = []
+        for label in unique_labels:
+            topic_doc_idx = np.nonzero(pred_labels == label)
+            topic_emb, topic_tok = (
+                topic_embeddings[label_to_idx[label]],
+                topic_tokens[label_to_idx[label]],
+            )
+            doc_emb = [token_embeddings[i_doc] for i_doc in topic_doc_idx]
+            topic_idf = np.array(idf[tok] for tok in topic_tok)
+            for i_doc in range(len(doc_emb)):
+                maxsim = np.max(cosine_similarity(topic_emb, doc_emb[i_doc]), axis=1)
+                score = np.sum((maxsim * topic_idf)) / np.sum(topic_idf)
+                scores.append(score)
+        return np.mean(scores)
+
+    return bertscore_r
 
 
 def evaluate_topic_quality(keywords, ex_wv, in_wv) -> dict[str, float]:
@@ -237,6 +240,16 @@ def evaluate_topic_quality(keywords, ex_wv, in_wv) -> dict[str, float]:
         "c_ex": word_embedding_coherence(keywords, ex_wv),
     }
     return res
+
+
+def is_mean_pooled(encoder) -> bool:
+    for module in encoder:
+        if isinstance(module, Pooling):
+            pooling = module
+            break
+    else:
+        raise ValueError("No pooling layer found")
+    return pooling.pooling_mode_mean_tokens
 
 
 def load_cache(out_path):
@@ -256,6 +269,11 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
     out_path = out_dir.joinpath(f"{encoder_path_name}.jsonl")
     emb_dir = Path("embeddings").joinpath(encoder_path_name)
     emb_dir.mkdir(exist_ok=True, parents=True)
+    encoder = SentenceTransformer(encoder_name)
+    if not is_mean_pooled(encoder):
+        raise ValueError(
+            "You can only use mean pooled encoders for these evaluations. Encoder is not mean pooled."
+        )
     if out_path.is_file():
         cache = load_cache(out_path)
     else:
@@ -280,16 +298,24 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
         tokenized_corpus = [tokenizer(text) for text in corpus]
         glove.train(tokenized_corpus)
         in_wv = glove.wv
-        encoder = SentenceTransformer(encoder_name, device="cpu")
         print("Encoding task corpus.")
-        emb_path = emb_dir.joinpath(f"{task_name}.npy")
+        emb_path = emb_dir.joinpath(f"{task_name}_token-embeddings.joblib")
         if emb_path.is_file():
             print("Embeddings found in cache.")
-            embeddings = np.load(emb_path)
+            emb_data = joblib.load(emb_path)
+            token_embeddings = emb_data["token_embeddings"]
+            tokens = emb_data["tokens"]
         else:
             print("Embeddings not found in cache, skipping.")
-            embeddings = encoder.encode(corpus, show_progress_bar=True)
-            np.save(emb_path, embeddings)
+            token_embeddings, tokens = encode_tokens(encoder, corpus, batch_size=64)
+            joblib.dump(
+                {"token_embeddings": token_embeddings, "tokens": tokens}, emb_path
+            )
+        print("Generating BERTScore evaluator")
+        bertscore_r = bertscore_r_evaluator(encoder, corpus, token_embeddings)
+        print("Mean pooling embeddings")
+        embeddings = [np.mean(tok_emb, axis=0) for tok_emb in token_embeddings]
+        embeddings = np.stack(embeddings)
         for model_name in topic_models:
             if (task_name, model_name) in cache:
                 print(f"{model_name} already done, skipping.")
@@ -317,6 +343,10 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
                 "dps": len(corpus) / runtime,
                 "n_components": model.components_.shape[0],
                 "true_n": len(set(true_labels)),
+                "bertscore_r": bertscore_r(model, labels),
+                "linear_probing_f1_micro": linear_probing(
+                    doc_topic_matrix, true_labels
+                ),
                 **clust_scores,
                 **topic_scores,
             }
