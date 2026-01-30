@@ -8,11 +8,16 @@ from typing import Callable, Iterable
 import gensim.downloader as api
 import mteb
 import numpy as np
+import torch
 from datasets import load_dataset
 from glovpy import GloVe
 from sentence_transformers import SentenceTransformer
 from sklearn import metrics
-from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.model_selection import cross_val_score
+from tqdm import trange
 from turftopic import (GMM, AutoEncodingTopicModel, BERTopic, FASTopic, KeyNMF,
                        SemanticSignalSeparation, SensTopic, Top2Vec, Topeax)
 
@@ -132,6 +137,49 @@ def evaluate_clustering(true_labels, pred_labels) -> dict[str, float]:
     return res
 
 
+def linear_probing(doc_topic_matrix, true_labels) -> float:
+    scores = cross_val_score(
+        LogisticRegression(),
+        doc_topic_matrix,
+        true_labels,
+        cv=5,
+        scoring="f1_micro",
+    )
+    return float(np.mean(scores))
+
+
+def encode_tokens(encoder, texts, batch_size=64):
+    token_embeddings = []
+    tokens = []
+    for start_index in trange(
+        0,
+        len(texts),
+        batch_size,
+        desc="Encoding batches of documents on token level",
+    ):
+        batch = texts[start_index : start_index + batch_size]
+        features = encoder.tokenize(batch)
+        with torch.no_grad():
+            output_features = encoder.forward(features)
+        n_tokens = output_features["attention_mask"].sum(axis=1)
+        start_token = torch.argmax(
+            (output_features["attention_mask"] > 0).to(torch.long), axis=1
+        )
+        end_token = start_token + n_tokens
+        for i_doc in range(len(batch)):
+            _token_embeddings = (
+                output_features["token_embeddings"][
+                    i_doc, start_token[i_doc] : end_token[i_doc], :
+                ]
+                .float()
+                .numpy(force=True)
+            )
+            _tokens = encoder.tokenizer(batch[i_doc]).tokens()
+            token_embeddings.append(_token_embeddings)
+            tokens.append(_tokens)
+    return token_embeddings, tokens
+
+
 def get_keywords(model) -> list[list[str]]:
     """Get top words and ignore outlier topic."""
     n_topics = model.components_.shape[0]
@@ -144,6 +192,42 @@ def get_keywords(model) -> list[list[str]]:
         if topic_id != -1:
             res.append(words)
     return res
+
+
+def bertscore_r(model, pred_labels, corpus) -> float:
+    encoder = model.encoder_
+    # from https://aclanthology.org/2024.findings-emnlp.790.pdf
+    vect = TfidfVectorizer(tokenizer=lambda s: encoder.tokenizer(s).tokens()).fit(
+        corpus
+    )
+    # Mapping of each token to its IDF value
+    idf = dict(zip(vect.get_feature_names_out(), vect.idf_))
+    n_topics = model.components_.shape[0]
+    try:
+        classes = model.classes_
+    except AttributeError:
+        classes = list(range(n_topics))
+    label_to_idx = {label: i for i, label in enumerate(classes)}
+    unique_labels = np.unique(pred_labels)
+    keywords = get_keywords(model)
+    topic_desc = [", ".join(keys) for keys in keywords]
+    topic_embeddings, topic_tokens = encode_tokens(encoder, topic_desc)
+    scores = []
+    for label in unique_labels:
+        topic_emb, topic_tok = (
+            topic_embeddings[label_to_idx[label]],
+            topic_tokens[label_to_idx[label]],
+        )
+        topic_documents = [
+            doc for is_in_topic, doc in zip(pred_labels == label, corpus) if is_in_topic
+        ]
+        doc_emb, doc_tok = encode_tokens(encoder, topic_documents)
+        topic_idf = np.array(idf[tok] for tok in topic_tok)
+        for i_doc in range(len(topic_documents)):
+            maxsim = np.max(cosine_similarity(topic_emb, doc_emb[i_doc]), axis=1)
+            score = np.sum((maxsim * topic_idf)) / np.sum(topic_idf)
+            scores.append(score)
+    return np.mean(scores)
 
 
 def evaluate_topic_quality(keywords, ex_wv, in_wv) -> dict[str, float]:
@@ -214,11 +298,11 @@ def main(encoder_name: str = "all-MiniLM-L6-v2"):
             true_n = len(set(true_labels))
             model = topic_models[model_name](encoder=encoder, n_components=true_n)
             start_time = time.time()
-            doc_topic_matrx = model.fit_transform(corpus, embeddings=embeddings)
+            doc_topic_matrix = model.fit_transform(corpus, embeddings=embeddings)
             end_time = time.time()
             labels = getattr(model, "labels_", None)
             if labels is None:
-                labels = np.argmax(doc_topic_matrx, axis=1)
+                labels = np.argmax(doc_topic_matrix, axis=1)
             keywords = get_keywords(model)
             print("Evaluating model.")
             clust_scores = evaluate_clustering(true_labels, labels)
